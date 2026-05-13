@@ -1,0 +1,84 @@
+resources:
+  pipelines:
+    # ----------------------------------------------------------------------
+    # Ingestion Gateway — serverless compute that connects to SQL Server,
+    # reads Change Tracking events, and stages them in
+    # ${target_catalog}.${lfc_staging_schema}.${lfc_gateway_storage_name}.
+    #
+    # The gateway pipeline owns the connection to the source. The
+    # ingestion pipeline below references it by id and is the resource
+    # that lands rows in bronze.consultoras_raw.
+    # ----------------------------------------------------------------------
+    lfc_consultoras_gateway:
+      name: "[${bundle.target}] LFC SQL Server gateway — consultoras"
+
+      gateway_definition:
+        connection_name: ${var.sqlserver_connection_name}
+        gateway_storage_catalog: ${var.target_catalog}
+        gateway_storage_schema: ${var.lfc_staging_schema}
+        gateway_storage_name: ${var.lfc_gateway_storage_name}
+
+      # Ingestion Gateway pipelines MUST be continuous (long-running, watches
+      # SQL Server's Change Tracking log) and MUST run on dedicated compute,
+      # NOT serverless (that's an LFC platform constraint at time of writing).
+      # Per-task orchestration of "what gets pulled into bronze" happens at
+      # the ingestion pipeline below (which can be triggered + serverless).
+      continuous: true
+      serverless: false
+
+      # Catalog/schema for the gateway pipeline resource itself (not the
+      # data — data goes to gateway_storage_*). Must be a writable schema.
+      catalog: ${var.target_catalog}
+      schema: ${var.lfc_staging_schema}
+
+      notifications:
+        - email_recipients:
+            - ${var.notification_email}
+          alerts:
+            - on-update-failure
+            - on-flow-failure
+
+      permissions:
+        - level: CAN_VIEW
+          group_name: users
+
+    # ----------------------------------------------------------------------
+    # Ingestion Pipeline — references the gateway above and lists which
+    # source tables to ingest. We ingest exactly one table for the demo:
+    # SQL Server `DemoDB.${var.sqlserver_schema}.consultoras` -> Databricks
+    # `${target_catalog}.bronze.consultoras_raw`.
+    #
+    # Change Tracking vs CDC is auto-detected from what's enabled on the
+    # source table. Slice 02 enabled CHANGE_TRACKING (not CDC), so LFC
+    # will operate in CT mode automatically.
+    # ----------------------------------------------------------------------
+    lfc_consultoras_ingest:
+      name: "[${bundle.target}] LFC SQL Server ingest — consultoras"
+
+      ingestion_definition:
+        ingestion_gateway_id: ${resources.pipelines.lfc_consultoras_gateway.id}
+        objects:
+          - table:
+              source_catalog: ${var.sqlserver_database}
+              source_schema: ${var.sqlserver_schema}
+              source_table: consultoras
+              destination_catalog: ${var.target_catalog}
+              destination_schema: bronze
+              destination_table: consultoras_raw
+
+      continuous: false
+      serverless: ${var.serverless}
+
+      catalog: ${var.target_catalog}
+      schema: bronze
+
+      notifications:
+        - email_recipients:
+            - ${var.notification_email}
+          alerts:
+            - on-update-failure
+            - on-flow-failure
+
+      permissions:
+        - level: CAN_VIEW
+          group_name: users

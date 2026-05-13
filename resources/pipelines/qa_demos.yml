@@ -1,0 +1,46 @@
+# Q&A demos pipeline — demonstrates Pain 1 (Type Widening), Pain 2
+# (ForEachBatch sink), Pain 3 (REPLACE WHERE flow) live for Q&A.
+#
+# Channel: PREVIEW (required for ForEachBatch PuPr + REPLACE WHERE PrPr).
+# Workspace must be enrolled in REPLACE WHERE PrPr; otherwise comment
+# out 03_replace_where.sql before deploying.
+#
+# Prereq: run the qa_demos_setup Job first to create the toy source table.
+resources:
+  pipelines:
+    qa_demos_pipeline:
+      name: "[${bundle.target}] qa-demos"
+      catalog: ${var.target_catalog}
+      schema: qa_demos
+
+      serverless: ${var.serverless}
+      photon: true
+      # PREVIEW channel: PuPr ForEachBatch + PrPr REPLACE WHERE flow.
+      channel: PREVIEW
+      continuous: false
+
+      # root_path silences the workspace UI's "No root folder defined"
+      # warning and gives the pipeline page a clean source tree.
+      root_path: ../../src/qa_demos
+
+      libraries:
+        - glob:
+            include: ../../src/qa_demos/**
+
+      configuration:
+        target_catalog: ${var.target_catalog}
+        # Pipeline-level Type Widening enable (Pain 1). Every streaming
+        # table the pipeline creates gets delta.enableTypeWidening = true
+        # without needing the TBLPROPERTIES on each one.
+        pipelines.enableTypeWidening: 'true'
+
+      notifications:
+        - email_recipients:
+            - ${var.notification_email}
+          alerts:
+            - on-update-failure
+            - on-flow-failure
+
+      permissions:
+        - level: CAN_VIEW
+          group_name: users

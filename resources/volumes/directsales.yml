@@ -1,0 +1,12 @@
+resources:
+  volumes:
+    bronze_lz:
+      catalog_name: ${var.target_catalog}
+      schema_name: bronze
+      name: lz
+      volume_type: MANAGED
+      comment: |
+        Bronze landing zone for Auto Loader parquet drops.
+        Pedidos files land under the /pedidos/ subfolder; the bronze
+        streaming table reads from var.source_volume_path which resolves
+        to /Volumes/<target_catalog>/bronze/lz/pedidos at deploy time.

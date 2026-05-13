@@ -1,0 +1,21 @@
+# Q&A demos — one-time source seed Job. Run before the qa_demos pipeline
+# the first time you deploy. Idempotent (uses MERGE under the hood) so
+# re-running is safe between rehearsals.
+#
+#   databricks bundle run qa_demos_setup -t <target>
+resources:
+  jobs:
+    qa_demos_setup:
+      name: "[${bundle.target}] Q&A demos — seed toy source table"
+
+      tasks:
+        - task_key: seed_toy_source
+          notebook_task:
+            notebook_path: ../../src/notebooks/qa_demos_setup.py
+            base_parameters:
+              target_catalog: ${var.target_catalog}
+          # Serverless — no cluster spec needed.
+
+      permissions:
+        - level: CAN_VIEW
+          group_name: users

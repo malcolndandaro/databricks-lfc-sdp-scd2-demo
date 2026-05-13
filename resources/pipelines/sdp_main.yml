@@ -1,0 +1,45 @@
+resources:
+  pipelines:
+    sdp_main:
+      # Prefix matches every other resource in the bundle (LFC pipelines,
+      # all 3 Jobs). Avoids name collision when dev + prod both deploy to
+      # the same workspace. Existing dev pipeline `sdp-main` will
+      # be renamed to `[dev] sdp-main` on next deploy.
+      name: "[${bundle.target}] sdp-main"
+      catalog: ${var.target_catalog}
+      schema: silver
+
+      serverless: ${var.serverless}
+      photon: true
+      # PREVIEW channel for the demo: gets new SDP features (e.g. UI
+      # improvements, newer AutoCDC semantics) earlier than CURRENT.
+      # Apply to dev + prod together — channel is a top-level pipeline
+      # attribute, not target-scoped.
+      channel: PREVIEW
+      continuous: false
+
+      # root_path silences the workspace UI's "No root folder defined" warning
+      # by giving the pipeline a single source-tree anchor. DABs resolves
+      # ../../src/sdp relative to this file (resources/pipelines/sdp_main.yml)
+      # and deploys it under the bundle's files root. The glob below stays
+      # exactly as before — root_path is just metadata for the UI.
+      root_path: ../../src/sdp
+
+      libraries:
+        - glob:
+            include: ../../src/sdp/**
+
+      configuration:
+        target_catalog: ${var.target_catalog}
+        source_volume_path: ${var.source_volume_path}
+
+      notifications:
+        - email_recipients:
+            - ${var.notification_email}
+          alerts:
+            - on-update-failure
+            - on-flow-failure
+
+      permissions:
+        - level: CAN_VIEW
+          group_name: users

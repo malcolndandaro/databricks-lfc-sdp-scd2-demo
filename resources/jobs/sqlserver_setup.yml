@@ -1,0 +1,144 @@
+resources:
+  jobs:
+    sqlserver_setup:
+      name: "[${bundle.target}] Direct-Sales — SQL Server setup + LFC sync"
+      description: |
+        End-to-end SQL Server reset for the demo. Eight sequential tasks:
+
+          1. create_uc_connection       (idempotent CREATE CONNECTION)
+          2. phase_0_truncate           (TRUNCATE crm.consultoras so subsequent
+                                         phases produce fresh CT events instead
+                                         of no-op'ing on already-seeded data)
+          3. phase_1_seed               (DB / table / CT + 500 Consultoras
+                                         with hero #42 at 'bronze')
+          4. lfc_initial_sync           (LFC writes hero=bronze + 500 rows
+                                         to bronze.consultoras_raw)
+          5. sdp_initial_refresh        (full_refresh of sdp_main so
+                                         silver + dim capture hero=bronze
+                                         state BEFORE phase_2 mutates the
+                                         source — load-bearing for SCD2)
+          6. phase_2_transitions        (UPDATE hero -> 'prata' + 48 others;
+                                         180s gateway catch-up wait baked in)
+          7. lfc_post_transition_sync   (LFC writes the change events to
+                                         bronze.consultoras_raw)
+          8. sdp_incremental_refresh    (incremental refresh: AutoCDC SCD2
+                                         sees the bronze->prata UPDATE as a
+                                         discrete change event and closes
+                                         the bronze __END_AT row + opens a
+                                         new prata row in dim_consultora)
+
+        Why two SDP refreshes? AutoCDC SCD2 tracks history by processing
+        the source stream INCREMENTALLY. A single fused refresh after both
+        LFC syncs collapses bronze's v2 INSERTs + v5 UPDATEs into final
+        state per row (silver streaming with row tracking is upsert-like),
+        so AutoCDC never sees hero at bronze — only the prata final state.
+        Two refreshes give it two distinct snapshots to compare and
+        produce the canonical closed-bronze + open-prata pair.
+
+        Diagnosis incident: 2026-05-11 (single-refresh attempt: 49 of 49
+        bronze updates reached bronze.consultoras_raw v5, but dim collapsed
+        to 1 row per consultora). Two-refresh design fixes this.
+
+        phase_0_truncate was added 2026-05-11: without it, every reset after
+        the first one produced only one row per consultora in dim_consultora
+        because SQL Server was already at post-transition state and the
+        seed/transition phases no-op'd.
+
+      max_concurrent_runs: 1
+
+      tasks:
+        - task_key: create_uc_connection
+          notebook_task:
+            notebook_path: ../../src/notebooks/create_uc_connection.py
+            base_parameters:
+              sqlserver_host: ${var.sqlserver_host}
+              sqlserver_port: ${var.sqlserver_port}
+              sqlserver_database: ${var.sqlserver_database}
+              sqlserver_secret_scope: ${var.sqlserver_secret_scope}
+              sqlserver_secret_user_key: ${var.sqlserver_secret_user_key}
+              sqlserver_secret_password_key: ${var.sqlserver_secret_password_key}
+              sqlserver_connection_name: ${var.sqlserver_connection_name}
+
+        - task_key: phase_0_truncate
+          depends_on:
+            - task_key: create_uc_connection
+          notebook_task:
+            notebook_path: ../../src/notebooks/run_sqlserver_setup.py
+            base_parameters:
+              phase: phase_0_truncate
+              schema: ${var.sqlserver_schema}
+              sqlserver_host: ${var.sqlserver_host}
+              sqlserver_port: ${var.sqlserver_port}
+              sqlserver_database: ${var.sqlserver_database}
+              sqlserver_secret_scope: ${var.sqlserver_secret_scope}
+              sqlserver_secret_user_key: ${var.sqlserver_secret_user_key}
+              sqlserver_secret_password_key: ${var.sqlserver_secret_password_key}
+              ddl_workspace_path: ${workspace.file_path}/sql_server/ddl
+
+        - task_key: phase_1_seed
+          depends_on:
+            - task_key: phase_0_truncate
+          notebook_task:
+            notebook_path: ../../src/notebooks/run_sqlserver_setup.py
+            base_parameters:
+              phase: phase_1_seed
+              schema: ${var.sqlserver_schema}
+              sqlserver_host: ${var.sqlserver_host}
+              sqlserver_port: ${var.sqlserver_port}
+              sqlserver_database: ${var.sqlserver_database}
+              sqlserver_secret_scope: ${var.sqlserver_secret_scope}
+              sqlserver_secret_user_key: ${var.sqlserver_secret_user_key}
+              sqlserver_secret_password_key: ${var.sqlserver_secret_password_key}
+              ddl_workspace_path: ${workspace.file_path}/sql_server/ddl
+
+        - task_key: lfc_initial_sync
+          depends_on:
+            - task_key: phase_1_seed
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.lfc_consultoras_ingest.id}
+            full_refresh: false
+
+        - task_key: sdp_initial_refresh
+          depends_on:
+            - task_key: lfc_initial_sync
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.sdp_main.id}
+            full_refresh: true
+
+        - task_key: phase_2_transitions
+          depends_on:
+            - task_key: sdp_initial_refresh
+          notebook_task:
+            notebook_path: ../../src/notebooks/run_sqlserver_setup.py
+            base_parameters:
+              phase: phase_2_transitions
+              schema: ${var.sqlserver_schema}
+              sqlserver_host: ${var.sqlserver_host}
+              sqlserver_port: ${var.sqlserver_port}
+              sqlserver_database: ${var.sqlserver_database}
+              sqlserver_secret_scope: ${var.sqlserver_secret_scope}
+              sqlserver_secret_user_key: ${var.sqlserver_secret_user_key}
+              sqlserver_secret_password_key: ${var.sqlserver_secret_password_key}
+              ddl_workspace_path: ${workspace.file_path}/sql_server/ddl
+
+        - task_key: lfc_post_transition_sync
+          depends_on:
+            - task_key: phase_2_transitions
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.lfc_consultoras_ingest.id}
+            full_refresh: false
+
+        - task_key: sdp_incremental_refresh
+          depends_on:
+            - task_key: lfc_post_transition_sync
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.sdp_main.id}
+            full_refresh: false
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+
+      permissions:
+        - level: CAN_VIEW
+          group_name: users

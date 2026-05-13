@@ -1,0 +1,29 @@
+name: deploy-dev
+
+# Slice 10 — manual dev deploy. Lets the team preview a branch on
+# `directsales_dev` before merging to `main`. workflow_dispatch only;
+# never runs automatically.
+#
+# Auth: same PAT as the other workflows. Deploys appear as Malcoln's
+# user; the dev target's workspace root path is whatever databricks.yml
+# resolves for the runner's identity.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: databricks bundle deploy -t dev
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - name: databricks bundle deploy -t dev
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DATABRICKS_BUNDLE_ENGINE: direct
+        run: databricks bundle deploy -t dev

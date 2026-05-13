@@ -1,0 +1,7 @@
+# PrPr / Beta SDP syntaxes that sqlfluff doesn't recognize yet.
+# Each entry is justified — don't blanket-ignore.
+#
+# REPLACE WHERE flow (PrPr Feb 2026): the inline `FLOW REPLACE WHERE
+# <predicate> BY NAME SELECT ...` syntax on CREATE STREAMING TABLE is
+# not in any sqlfluff dialect. Pipeline runtime parses it fine.
+src/qa_demos/03_replace_where.sql

@@ -1,0 +1,89 @@
+bundle:
+  name: direct-sales-databricks-demo
+
+include:
+  - resources/**/*.yml
+
+variables:
+  target_catalog:
+    description: "Unity Catalog name for this target. dev -> directsales_dev, prod -> directsales_prod."
+    default: directsales_dev
+  source_volume_path:
+    description: "UC volume path used as the Auto Loader source for pedidos parquet."
+    default: /Volumes/directsales_dev/bronze/lz/pedidos
+  serverless:
+    description: "Run SDP and ingestion pipelines on serverless compute."
+    default: true
+  notification_email:
+    description: "Email recipient for pipeline failure notifications."
+    default: <your-email@your-org.com>
+  remove_after:
+    description: "Cleanup signal date (YYYY-MM-DD) carried as a catalog property/tag. Set ~6 months past catalog creation."
+    default: "2026-11-08"
+  catalog_owner:
+    description: "Catalog owner identity, carried as a mandatory tag."
+    default: <your-email@your-org.com>
+  sqlserver_host:
+    description: "SQL Server hostname/IP for the demo source. See sql_server/INSTANCE.md."
+    default: "<SQLSERVER_HOST>"
+  sqlserver_port:
+    description: "SQL Server port."
+    default: "1433"
+  sqlserver_database:
+    description: "SQL Server database name."
+    default: "DemoDB"
+  sqlserver_secret_scope:
+    description: "Workspace secret scope holding SQL Server credentials."
+    default: "directsales-demo"
+  sqlserver_secret_user_key:
+    description: "Secret key holding the SA username (typically 'SA' but parameterised)."
+    default: "sqlserver-sa-user"
+  sqlserver_secret_password_key:
+    description: "Secret key holding the SA password."
+    default: "sqlserver-sa-password"
+  sqlserver_connection_name:
+    description: "UC connection name for the SQL Server source. Created by the create_uc_connection notebook task in sqlserver_setup."
+    default: "directsales_sqlserver_conn"
+  lfc_staging_schema:
+    description: "Schema inside the target catalog that holds Lakeflow Connect ingestion gateway staging artifacts."
+    default: "_lfc_staging"
+  lfc_gateway_storage_name:
+    description: "Storage object name for the LFC ingestion gateway (used as gateway_storage_name)."
+    default: "lfc_consultoras_gateway_storage"
+  sqlserver_schema:
+    description: "SQL Server schema holding the consultoras table. dev -> crm_dev, prod -> crm_prod."
+    default: "crm_dev"
+
+workspace:
+  host: https://<your-workspace>.cloud.databricks.com
+
+targets:
+  dev:
+    default: true
+    presets:
+      pipelines_development: true
+    variables:
+      target_catalog: directsales_dev
+      source_volume_path: /Volumes/directsales_dev/bronze/lz/pedidos
+      sqlserver_schema: crm_dev
+
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Users/<YOUR_WORKSPACE_USER>/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      target_catalog: directsales_prod
+      source_volume_path: /Volumes/directsales_prod/bronze/lz/pedidos
+      sqlserver_schema: crm_prod
+    # Prod deploys the SAME resource set as dev (LFC pipelines + all 3
+    # Jobs + SDP). All resources are target-prefixed via [${bundle.target}]
+    # so they don't collide with dev in the shared workspace.
+    #
+    # Real isolation between dev + prod on the SQL Server side:
+    # dev tracks crm_dev.consultoras, prod tracks crm_prod.consultoras.
+    # Dev's `make reset` only ever truncates crm_dev, so prod bronze is
+    # unaffected.
+    #
+    # Prod's crm_prod schema is seeded ONCE via:
+    #   databricks bundle run sqlserver_setup -t prod
+    # After that initial seed, do not re-run the Job against prod.

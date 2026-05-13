@@ -1,0 +1,101 @@
+name: pr-validate
+
+# Slice 10 — runs on every PR targeting `main`. Four parallel jobs each
+# gate the merge: bundle validation, SQL lint, secret scan, and pytest
+# via databricks-connect serverless. Branch protection on `main`
+# requires all four checks green before merge.
+#
+# Auth: PAT-based via DATABRICKS_HOST + DATABRICKS_TOKEN repo secrets.
+# Deploys appear as Malcoln's user (no service principal). See
+# .github/ACTIONS.md for the rationale + customer-environment fallback.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  # gitleaks-action calls GET /pulls/<n>/commits to scope its scan to
+  # the PR diff — needs pull-requests:read on top of the default
+  # contents:read.
+  pull-requests: read
+
+jobs:
+  bundle-validate:
+    name: bundle validate -t dev
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - name: databricks bundle validate -t dev
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: databricks bundle validate -t dev
+
+  sql-lint:
+    name: sqlfluff lint
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      # Self-hosted runner has python3.11 on PATH via pyenv. We avoid
+      # actions/setup-python because its macOS install script hardcodes
+      # /Users/runner/hostedtoolcache (hosted-runner convention) and
+      # fails with Permission denied on this Mac. Use a per-job venv
+      # to keep dependencies hermetic across runs.
+      - name: Create venv + install sqlfluff
+        # Pin to v4.x to match the local-dev version; sqlfluff v3
+        # disagrees on a few databricks-dialect parse cases that v4
+        # accepts (notably ${target_catalog} variable substitution).
+        run: |
+          python3.11 -m venv .venv-lint
+          .venv-lint/bin/pip install --quiet "sqlfluff>=4,<5"
+      # SDP files use the databricks dialect (per .sqlfluff config).
+      # sql_server/ddl/ is intentionally not linted in CI — see
+      # .github/ACTIONS.md "sql-lint scope" for rationale.
+      - name: sqlfluff lint src/sdp/
+        run: .venv-lint/bin/sqlfluff lint --dialect databricks src/sdp/
+
+  secret-scan:
+    name: gitleaks
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so `gitleaks detect` scans every commit in the PR.
+          fetch-depth: 0
+      # We drive the gitleaks binary directly rather than via
+      # gitleaks/gitleaks-action@v2 because the action has two failure
+      # modes on self-hosted runners: (1) it tries to upload a SARIF
+      # artifact and fails if the GitHub account is at its Actions
+      # storage quota, (2) its downloader doesn't clean up its tmp
+      # location, so a previous failed run leaves stale files that
+      # block the next download. Direct binary, idempotent install via
+      # brew.
+      - name: Install gitleaks (if missing)
+        run: |
+          if ! command -v gitleaks >/dev/null 2>&1; then
+            brew install gitleaks
+          fi
+          gitleaks version
+      - name: gitleaks detect
+        run: gitleaks detect --no-banner --source . --redact --verbose
+
+  tests:
+    name: pytest (databricks-connect serverless)
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      # Per-job venv (see sql-lint comment for why we skip setup-python).
+      - name: Create venv + install dev deps
+        run: |
+          python3.11 -m venv .venv-tests
+          .venv-tests/bin/pip install --quiet -r requirements-dev.txt
+      - name: pytest src/tests/
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          # Routes databricks-connect to serverless compute instead of a
+          # named cluster. Required because CI has no cluster id to pin.
+          DATABRICKS_SERVERLESS_COMPUTE_ID: auto
+        run: .venv-tests/bin/pytest src/tests/ -v

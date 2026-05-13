@@ -1,0 +1,46 @@
+name: deploy-prod
+
+# Slice 10 — post-merge prod deploy. Triggered when a PR lands on `main`.
+# Runs `databricks bundle deploy -t prod` against `directsales_prod`. Does NOT
+# trigger any pipeline run — schedules + the LFC continuous gateway
+# handle that on their own cadence (per Q-decision in slice issue).
+#
+# Concurrency: `deploy-prod` group ensures two merges to `main` in quick
+# succession queue rather than racing.
+#
+# Auth: PAT via DATABRICKS_HOST + DATABRICKS_TOKEN. Deploys land in
+# /Workspace/Users/<YOUR_WORKSPACE_USER>/.bundle/<bundle>/prod
+# (per databricks.yml `prod.workspace.root_path`).
+#
+# `make reset` and DROP SCHEMA scripts are deliberately NOT wired here —
+# reset is local-only, never runs against prod. See `scripts/README.md`.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: databricks bundle deploy -t prod
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - name: databricks bundle deploy -t prod
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          # Catalog resources require the direct deployment engine — same
+          # reason `scripts/reset_databricks.py` sets it. Without this,
+          # any deploy that touches catalog declarations fails with
+          # "Catalog resources are only supported with direct deployment
+          # mode." Setting it always is safe.
+          DATABRICKS_BUNDLE_ENGINE: direct
+        run: databricks bundle deploy -t prod

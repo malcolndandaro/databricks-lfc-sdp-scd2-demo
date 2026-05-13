@@ -1,0 +1,32 @@
+resources:
+  jobs:
+    gold_setup:
+      name: "[${bundle.target}] Direct-Sales — gold-layer UDF setup"
+      description: |
+        Creates gold-layer SQL UDFs that the SDP pipeline depends on but
+        cannot declare itself (SDP only accepts STREAMING TABLE / MV /
+        APPLY CHANGES INTO / SET statements in pipeline files).
+
+        Currently creates:
+          * gold.comissao_pct(tier STRING) RETURNS DECIMAL(5,4)
+
+        Run once per workspace after `databricks bundle deploy`, before
+        running the sdp_main pipeline. Idempotent (CREATE OR
+        REPLACE FUNCTION) — safe to re-run on every demo reset.
+
+      max_concurrent_runs: 1
+
+      tasks:
+        - task_key: create_gold_udfs
+          notebook_task:
+            notebook_path: ../../src/notebooks/create_gold_udfs.py
+            base_parameters:
+              target_catalog: ${var.target_catalog}
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+
+      permissions:
+        - level: CAN_VIEW
+          group_name: users

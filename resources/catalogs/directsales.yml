@@ -1,0 +1,35 @@
+resources:
+  catalogs:
+    target_catalog_resource:
+      name: ${var.target_catalog}
+      comment: |
+        Direct-Sales E2E demo catalog. Carries cleanup tags
+        (`RemoveAfter`, `Owner`) so workspace admins can prune stale
+        demo catalogs.
+      properties:
+        RemoveAfter: ${var.remove_after}
+        Owner: ${var.catalog_owner}
+
+  schemas:
+    bronze:
+      catalog_name: ${var.target_catalog}
+      name: bronze
+      comment: "Raw ingestion landing zone (LFC + Auto Loader). 1:1 from source."
+
+    silver:
+      catalog_name: ${var.target_catalog}
+      name: silver
+      comment: "Curated 1:1 tables: type-cast, deduped, renamed. No SCD typing."
+
+    gold:
+      catalog_name: ${var.target_catalog}
+      name: gold
+      comment: "Dim/fact (AutoCDC SCD2/SCD1) and Materialized View reports."
+
+    lfc_staging:
+      catalog_name: ${var.target_catalog}
+      name: ${var.lfc_staging_schema}
+      comment: |
+        Lakeflow Connect ingestion gateway staging area. Internal — holds
+        gateway-managed change events between SQL Server and bronze.
+        Drop independently of bronze/silver/gold during reset.

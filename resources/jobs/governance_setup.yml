@@ -1,0 +1,36 @@
+resources:
+  jobs:
+    governance_setup:
+      name: "[${bundle.target}] Direct-Sales — gold-layer governance (acl_consultora, RLS, mask)"
+      description: |
+        Creates gold-layer governance assets (Slice 08):
+          * gold.acl_consultora Delta control table (3 cols: email, regiao, cpf)
+          * gold.consultora_rls(regiao STRING) RETURNS BOOLEAN — row filter
+          * gold.mask_cpf(cpf STRING) RETURNS STRING — column mask
+          * ALTER TABLE gold.dim_consultora SET ROW FILTER consultora_rls ON (regiao)
+          * ALTER TABLE gold.dim_consultora ALTER COLUMN cpf SET MASK mask_cpf
+
+        Run order: AFTER the SDP pipeline (sdp_main) has run at least once,
+        because the two ALTER TABLE statements require gold.dim_consultora to exist.
+        The Slice 12 reset path runs this Job after the SDP pipeline trigger.
+
+        Idempotent (CREATE TABLE IF NOT EXISTS / CREATE OR REPLACE FUNCTION /
+        SET ROW FILTER / SET MASK all replace-in-place). Re-running does NOT
+        reset acl_consultora row contents — that is `reset_databricks.py`'s job.
+
+      max_concurrent_runs: 1
+
+      tasks:
+        - task_key: create_governance
+          notebook_task:
+            notebook_path: ../../src/notebooks/create_governance.py
+            base_parameters:
+              target_catalog: ${var.target_catalog}
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+
+      permissions:
+        - level: CAN_VIEW
+          group_name: users
